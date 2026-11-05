@@ -31,7 +31,7 @@ let user = null;
 
 const initialState = () => ({
   phase: "setup", xmlBoxes: null, boxAltKeys: null, master: null, error: null, lastScanResult: null, loadProgress: null,
-  selectedCart: null, selectedBatch: null, routeItems: [], shelved: {}, currentIdx: 0, confirmedLoc: null,
+  selectedCart: null, selectedBatch: null, routeItems: [], shelved: {}, currentIdx: 0, confirmedLoc: null, pendingIdx: null, // pendingIdx: tuote luettu, odottaa paikan skannausta
   activeBox: null, productLookup: null, shelveStartTime: null, pausedTime: 0, pauseStart: null,
   manualLoc: false, // paikan käsinsyöttö auki (tarra ei lue)
   shrink: null, shrinkMeta: null, // laskettavat tuotteet (suuri hävikki): {tuotenro: tappio €}; null = lasketaan kaikki
@@ -94,7 +94,7 @@ function render() {
     case "shelve":
       if (!S.routeItems[S.currentIdx]) { finishShelving(true); return; }
       app.innerHTML = shelveView(v);
-      setPlaceholder(isLocConfirmed() ? (S.routeItems[S.currentIdx].counted === false ? "Skannaa EAN tai paina Hyllytetty" : "Skannaa EAN") : "Skannaa paikka");
+      setPlaceholder(S.pendingIdx != null ? "Skannaa paikka" : isLocConfirmed() && S.routeItems[S.currentIdx].counted === false ? "Skannaa tuote tai paina Hyllytetty" : "Skannaa tuote");
       showScan();
       break;
     case "report": hideScan(); app.innerHTML = reportView(v); break;
@@ -416,13 +416,27 @@ function selectCart(cartId, batchId) {
   });
 }
 
+// Skannausjärjestys: ensin tuote (EAN), sitten sen hyllypaikka. Paikan skannausta ei voi ohittaa. Jos paikka on jo vahvistettu (sama hylly kuin
+// edellisellä tuotteella), tuote kirjataan heti. Varakeino: paikan voi skannata myös ensin (esim. EAN ei lue), jolloin entinen kulku toimii.
 function confirmLocation(code) {
   if (!code || S.pauseStart) return;
   setState({ error: null, lastScanResult: null });
   const cur = S.routeItems[S.currentIdx];
   if (!cur) return;
   const sc = code.trim().toUpperCase();
-  if (sc === cur.location.trim().toUpperCase()) { setState({ manualLoc: false, confirmedLoc: sc, lastScanResult: { type: "ok", text: "✓ " + cur.location } }); syncProgress(); return; }
+  const pend = S.pendingIdx != null ? S.routeItems[S.pendingIdx] : null;
+  if (pend) {
+    if ((pend.location || "").trim().toUpperCase() === sc) {
+      const idx = S.pendingIdx;
+      setState({ manualLoc: false, confirmedLoc: sc, currentIdx: idx, pendingIdx: null, lastScanResult: { type: "ok", text: "✓ " + pend.location } });
+      syncProgress();
+      applyEan(idx);
+      return;
+    }
+    setState({ error: `Väärä paikka — tuotteen paikka on ${pend.location}`, lastScanResult: { type: "fail", text: "Väärä" } });
+    return;
+  }
+  if (sc === (cur.location || "").trim().toUpperCase()) { setState({ manualLoc: false, confirmedLoc: sc, lastScanResult: { type: "ok", text: "✓ " + cur.location } }); syncProgress(); return; }
   const other = S.routeItems.findIndex((i) => i.location && i.location.trim().toUpperCase() === sc);
   if (other !== -1) { setState({ manualLoc: false, confirmedLoc: sc, currentIdx: other, lastScanResult: { type: "ok", text: "✓ " + S.routeItems[other].location } }); syncProgress(); return; }
   setState({ error: "Paikka ei reitillä", lastScanResult: { type: "fail", text: "Väärä" } });
@@ -460,18 +474,30 @@ function shelveAll() {
   setTimeout(autoAdvance, 400);
 }
 
+// Kirjaa luetun tuotteen (paikka on jo vahvistettu): laskettava +1 ja puhe, ei-laskettava koko määrä.
+function applyEan(si) {
+  const item = S.routeItems[si];
+  if (!item) return;
+  if (item.counted === false) { S.currentIdx = si; shelveAll(); } else addOne(item, si);
+}
+
 function confirmEan(code) {
   if (!code || S.pauseStart) return;
   stopListening();
   setState({ error: null, lastScanResult: null });
-  if (!S.confirmedLoc) { setState({ error: "Skannaa paikka ensin" }); return; }
+  const left = (i) => (S.shelved[i.vnr] || 0) < i.qty;
   const cur = S.routeItems[S.currentIdx];
-  if (cur && eanMatches(cur.ean, code)) { if (cur.counted === false) shelveAll(); else addOne(cur, S.currentIdx); return; }
-  const si = S.routeItems.findIndex((i) => i.location && i.location.trim().toUpperCase() === S.confirmedLoc && eanMatches(i.ean, code));
-  if (si === -1) { setState({ error: "EAN ei tunnistettu" }); return; }
-  if ((S.shelved[S.routeItems[si].vnr] || 0) >= S.routeItems[si].qty) { setState({ error: "Jo valmis" }); return; }
-  if (S.routeItems[si].counted === false) { S.currentIdx = si; shelveAll(); return; }
-  addOne(S.routeItems[si], si);
+  const atLoc = (i) => i.location && i.location.trim().toUpperCase() === S.confirmedLoc;
+  // Tuote voi olla mikä tahansa reitin keskeneräinen tuote (nykyinen ensin, sitten vahvistetun paikan tuotteet)
+  let si = cur && eanMatches(cur.ean, code) ? S.currentIdx : -1;
+  if (si === -1) si = S.routeItems.findIndex((i) => left(i) && atLoc(i) && eanMatches(i.ean, code));
+  if (si === -1) si = S.routeItems.findIndex((i) => left(i) && eanMatches(i.ean, code));
+  if (si === -1) { setState({ error: S.routeItems.some((i) => eanMatches(i.ean, code)) ? "Jo valmis" : "EAN ei tunnistettu" }); return; }
+  const item = S.routeItems[si];
+  if (!item.location || atLoc(item)) { applyEan(si); return; }
+  // Paikka vahvistamatta: tuote jää odottamaan paikan skannausta
+  setState({ currentIdx: si, pendingIdx: si, manualLoc: false, lastScanResult: { type: "ok", text: `✓ ${item.name} — skannaa nyt paikka ${item.location}` } });
+  syncProgress();
 }
 
 function setQty(vnr, n) {
@@ -504,7 +530,7 @@ function navTo(idx) {
   if (idx < 0 || idx >= S.routeItems.length) return;
   stopListening();
   const same = (S.routeItems[S.currentIdx]?.location || "").trim().toUpperCase() === (S.routeItems[idx]?.location || "").trim().toUpperCase();
-  setState({ currentIdx: idx, confirmedLoc: same ? S.confirmedLoc : null, manualLoc: false, lastScanResult: null, error: null });
+  setState({ currentIdx: idx, pendingIdx: null, confirmedLoc: same ? S.confirmedLoc : null, manualLoc: false, lastScanResult: null, error: null });
   syncProgress();
 }
 
@@ -547,7 +573,7 @@ function resetDay() {
 // Sivun päivityksen jälkeen palautettu hyllytysvaihe ei sisällä XML/tuoterekisteri-dataa: ladataan uudelleen.
 function leaveTo(phase) {
   clearSaved(); undoStack = [];
-  const reset = { selectedCart: null, selectedBatch: null, routeItems: [], shelved: {}, currentIdx: 0, confirmedLoc: null };
+  const reset = { selectedCart: null, selectedBatch: null, routeItems: [], shelved: {}, currentIdx: 0, confirmedLoc: null, pendingIdx: null };
   if (!S.xmlBoxes || !S.master) setState({ ...reset, phase: "setup", lastScanResult: { type: "ok", text: "Lataa tiedot uudelleen jatkaaksesi" } });
   else setState({ ...reset, phase });
 }
@@ -572,7 +598,9 @@ function processScan(val) {
     if (known || code.length >= 15) addBox(code);
     else lookupEan(code);
   } else if (S.phase === "shelve") {
-    if (!isLocConfirmed()) confirmLocation(code);
+    const sc = code.toUpperCase();
+    const isLoc = S.routeItems.some((i) => i.location && i.location.trim().toUpperCase() === sc) || /^[A-Z0-9]{1,3}-\d+-[A-Z0-9]+-\d+$/.test(sc);
+    if (isLoc) confirmLocation(code);
     else confirmEan(code);
   }
 }

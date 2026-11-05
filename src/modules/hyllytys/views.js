@@ -259,7 +259,7 @@ export function shelveView(v) {
     : `<span class="location-big">📦 UUSI-hyllyyn</span>`;
   const counter = uncounted
     ? `<div style="margin-bottom:10px;font-size:13px;color:#64748b">Ei laskentaa: hyllytä koko määrä <b>${cur.qty} kpl</b></div>
-      <button class="btn" style="background:${done ? "#16a34a" : "#288264"};padding:18px 0;font-size:18px" data-action="shelve-all" ${locOk || done ? "" : "disabled"}>${done ? "✓ Hyllytetty — seuraava" : locOk ? `✓ Hyllytetty (${cur.qty} kpl)` : "Skannaa ensin paikka"}</button>`
+      <button class="btn" style="background:${done ? "#16a34a" : "#288264"};padding:18px 0;font-size:18px" data-action="shelve-all" ${locOk || done ? "" : "disabled"}>${done ? "✓ Hyllytetty — seuraava" : locOk ? `✓ Hyllytetty (${cur.qty} kpl)` : "Skannaa ensin tuote ja paikka"}</button>`
     : `<div style="display:inline-block;margin-bottom:8px;padding:3px 10px;border-radius:999px;background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;font-size:12px;font-weight:700">🔢 LASKE KAPPALEET — suuri hävikki</div>
       <div class="qty-display" style="background:${done ? "#f0fdf4" : "#f8fafc"};border:2px solid ${done ? "#86efac" : "#e2e8f0"}">
         <span style="font-size:36px;font-weight:800;color:${done ? "#16a34a" : "#1e293b"}">${cc}</span><span style="font-size:22px;color:#94a3b8"> / </span>
@@ -284,11 +284,13 @@ export function shelveView(v) {
       ${counter}</div>
 
     <div class="card">
-      ${!locOk ? `<div style="font-size:13px;font-weight:600;color:#92400e;margin-bottom:8px">1. Skannaa paikka: <b>${esc(cur.location)}</b></div>
+      ${!locOk ? (S.pendingIdx === S.currentIdx
+          ? `<div style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:8px">✓ Tuote luettu — 2. Skannaa paikka: <b>${esc(cur.location)}</b></div>`
+          : `<div style="font-size:13px;font-weight:600;color:#92400e;margin-bottom:8px">1. Skannaa tuote (sen jälkeen paikka <b>${esc(cur.location)}</b>)</div>`) + `
         ${S.manualLoc
           ? `<div style="display:flex;gap:6px;margin-bottom:8px"><input id="manual-loc" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="${esc(cur.location || "A3-17-A-05")}" style="flex:1;min-width:0;padding:12px;border:2px solid #f59e0b;border-radius:10px;font-size:18px;font-family:monospace;font-weight:700;text-transform:uppercase"><button class="btn-sm btn-info" data-action="manual-loc-ok">OK</button><button class="btn-sm btn-outline" data-action="manual-loc-cancel" aria-label="Peruuta">✕</button></div>`
           : `<button class="btn-sm btn-outline" style="width:100%;margin-bottom:8px" data-action="manual-loc-open">⌨ Tarra ei lue — syötä paikka käsin</button>`}`
-        : `<div style="font-size:13px;font-weight:600;color:#16a34a;margin-bottom:8px">✓ ${esc(cur.location)} — 2. ${uncounted ? "Skannaa EAN tai paina Hyllytetty" : "Skannaa EAN"}</div>`}
+        : `<div style="font-size:13px;font-weight:600;color:#16a34a;margin-bottom:8px">✓ Paikka ${esc(cur.location)} vahvistettu — ${uncounted ? "skannaa tuote tai paina Hyllytetty" : "skannaa tuote"}</div>`}
       ${result(S.lastScanResult)}${err(S.error)}</div>
 
     <div class="flex gap-8 mb-12">
