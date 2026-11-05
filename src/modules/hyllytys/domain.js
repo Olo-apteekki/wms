@@ -7,7 +7,7 @@ import { parseCsvObjects, pick } from "../../lib/csv.js";
 // kärryn 1 reitti päättyy siihen, mihin kärryn 2 alkaa, ja hyllylevyt tyhjenevät serpentiinissä järjestyksessä.
 // Rajat on laskettu tuoterekisterin paikkamääristä (n. 3 370 tuotetta A-alueella, n. 2 300 + 2 300 B-alueella):
 //   A-kärry 1: A2, A3 ja A4 hyllyt 15–26 · A-kärry 2: A4 hyllyt 1–14, A5, A6/A1 ja A7
-//   B-kärry 1: B1, B2 ja B3 hyllyt 0–16 · B-kärry 2: B3 hyllyt 17–26, B4 ja UU
+//   B-kärry 1: B1, B2 ja B3 hyllyt 0–16 · B-kärry 2: UU (hyllytetään ensin), B3 hyllyt 17–26 ja B4
 // Rajan siirto: muuta SPLITS-riviä (alin hyllynumero, joka kuuluu reitin loppupään kärrylle).
 // VÄLIAIKAISESTI vanha kärryjako (L, A, B; levy = käytävä), käyttäjän pyyntö 29.10.2026. Uuteen jakoon (A1/A2, B1/B2, levyt 1–5)
 // paluu: aseta CART_SPLIT_OLD = false. Vaihda kärryjako vasta, kun päivän hyllytys on valmis (kärryjen tunnukset eroavat: A ≠ A1/A2).
@@ -15,7 +15,7 @@ export const CART_SPLIT_OLD = true;
 const OLD_CARTS = [
   { id: "L", name: "L-kärry", color: "#ef4444", icon: "🔴", aisles: ["L1", "FA", "L2", "L3"], desc: "Levyt: L1, FA, L2, L3" },
   { id: "A", name: "A-kärry", color: "#10b981", icon: "🟢", aisles: ["A2", "A3", "A4", "A5", "A6_even", "A6odd_A1even", "A1odd_A7"], desc: "Levyt: A1+A6, A2, A3, A4, A5" },
-  { id: "B", name: "B-kärry", color: "#3b82f6", icon: "🔵", aisles: ["B1", "B2", "B3", "B4", "UU"], desc: "Levyt: B1, B2, B3, B4, UU" },
+  { id: "B", name: "B-kärry", color: "#3b82f6", icon: "🔵", aisles: ["UU", "B1", "B2", "B3", "B4"], desc: "Levyt: UU (ensin), B1, B2, B3, B4" },
 ];
 // Vanhassa jaossa levy = fyysinen käytävä (A6/A1/A7 jaetaan hyllynumeron parillisuuden mukaan)
 const OLD_LEVY = { A6_even: "A6", A6odd_A1even: "A1/A6", A1odd_A7: "A1/A7" };
@@ -24,7 +24,7 @@ const NEW_CARTS = [
   { id: "A1", name: "A-kärry 1", color: "#10b981", icon: "🟢", aisles: ["A2", "A3", "A4"], desc: "A2, A3, A4 (hyllyt 15–26)" },
   { id: "A2", name: "A-kärry 2", color: "#0d9488", icon: "🟩", aisles: ["A4", "A5", "A6_even", "A6odd_A1even", "A1odd_A7"], desc: "A4 (hyllyt 1–14), A5, A6/A1, A7" },
   { id: "B1", name: "B-kärry 1", color: "#3b82f6", icon: "🔵", aisles: ["B1", "B2", "B3"], desc: "B1, B2, B3 (hyllyt 0–16)" },
-  { id: "B2", name: "B-kärry 2", color: "#6366f1", icon: "🟣", aisles: ["B3", "B4", "UU"], desc: "B3 (hyllyt 17–26), B4, UU" },
+  { id: "B2", name: "B-kärry 2", color: "#6366f1", icon: "🟣", aisles: ["UU", "B3", "B4"], desc: "UU (ensin), B3 (hyllyt 17–26), B4" },
 ];
 export const CARTS = CART_SPLIT_OLD ? OLD_CARTS : NEW_CARTS;
 
@@ -78,11 +78,11 @@ export const PLATES = {
     { from: ["B3", 5], label: "B3 hyllyt 5–16" },
   ],
   B2: [
-    { label: "B3 hyllyt 17–26, B4 hyllyt 26–25" },
+    { label: "UU hyllyt 1–2" },
+    { from: ["UU", 3], label: "UU hylly 3" },
+    { from: ["B3", 17], label: "B3 hyllyt 17–26, B4 hyllyt 26–25" },
     { from: ["B4", 24], label: "B4 hyllyt 24–12" },
     { from: ["B4", 11], label: "B4 hyllyt 11–0" },
-    { from: ["UU", 1], label: "UU hylly 1" },
-    { from: ["UU", 3], label: "UU hylly 3" },
   ],
 };
 
@@ -113,8 +113,9 @@ const ROUTE = [
   { id: "L1", asc: 1 }, { id: "FA", asc: 1 }, { id: "L2", asc: 0 }, { id: "L3", asc: 1 }, { id: "L4", asc: 0 }, { id: "L5", asc: 1 },
   { id: "A2", asc: 0 }, { id: "A3", asc: 1 }, { id: "A4", asc: 0 }, { id: "A5", asc: 1 },
   { id: "A6_even", asc: 0 }, { id: "A6odd_A1even", asc: 1 }, { id: "A1odd_A7", asc: 0 },
-  { id: "B1", asc: 1 }, { id: "B2", asc: 0 }, { id: "B3", asc: 1 }, { id: "B4", asc: 0 },
-  { id: "UU", asc: 1 }, { id: "RX", asc: 1 }, { id: "JK", asc: 1 },
+  // UU hyllytetään ensin B-alueen kärryssä (käyttäjän pyyntö 5.11.2026)
+  { id: "UU", asc: 1 }, { id: "B1", asc: 1 }, { id: "B2", asc: 0 }, { id: "B3", asc: 1 }, { id: "B4", asc: 0 },
+  { id: "RX", asc: 1 }, { id: "JK", asc: 1 },
 ];
 const ROUTE_ORDER = ROUTE.map((r) => r.id);
 const ROUTE_ASC = Object.fromEntries(ROUTE.map((r) => [r.id, r.asc]));
