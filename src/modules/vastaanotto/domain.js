@@ -255,11 +255,13 @@ export function combineDayCarts(orders, master, worker) {
       if (g.kind === "cart") parts.push({ o: p.o, g, d: cartDelta(g, p.o.sent?.[sentKey(id, worker)] || {}) });
     }
     if (!proto) continue;
-    const newVnrs = new Set();
+    // newItems = vielä hyllytykseen viemättömät tuotteet (kärryn "uusi sisältö"); jo viedyt eivät näy kärryn tuotelistassa
+    const newMerged = new Map();
     let newPieces = 0;
-    for (const x of parts) for (const i of x.d.items) { newVnrs.add(vkey(i.vnr)); newPieces += i.qty; }
+    for (const x of parts) for (const i of x.d.items) { const k = vkey(i.vnr); const ex = newMerged.get(k); if (ex) ex.qty += i.qty; else newMerged.set(k, { ...i }); newPieces += i.qty; }
     const items = [...merged.values()];
-    groups.push({ ...proto, items: proto.kind === "cart" ? sortRoute(items) : items, parts, newCount: newVnrs.size, newPieces });
+    const newItems = sortRoute([...newMerged.values()]);
+    groups.push({ ...proto, items: proto.kind === "cart" ? sortRoute(items) : items, newItems, parts, newCount: newItems.length, newPieces });
   }
   return { groups, items: per.flatMap((p) => p.items), names: per.filter((p) => p.items.length).map((p) => p.o.supplier) };
 }

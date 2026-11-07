@@ -179,12 +179,12 @@ function cartsTab(v) {
   const deltas = Object.fromEntries(groups.filter((g) => g.kind === "cart").map((g) => [g.id, { count: g.newCount }]));
   const newTotal = Object.values(deltas).reduce((s, d) => s + d.count, 0);
   const uniq = [...new Set(names)];
-  return `<div class="card"><div class="muted small">👤 ${esc(v.currentWorker)}: omat kärryt. Tänään puretut toimittajatilaukset yhdistettynä samoihin kärryihin (${uniq.map(esc).join(", ")}), hyllytysreitin mukaisessa järjestyksessä. ${items.length} riviä, ${items.reduce((s, i) => s + i.qty, 0)} kpl.</div>
+  return `<div class="card"><div class="muted small">👤 ${esc(v.currentWorker)}: omat kärryt. Tänään puretut toimittajatilaukset yhdistettynä samoihin kärryihin (${uniq.map(esc).join(", ")}), hyllytysreitin mukaisessa järjestyksessä. Kärryn kortilla näkyvät vain vielä hyllytykseen viemättömät (uudet) tuotteet.</div>
       <button class="btn" style="margin-top:8px" data-action="to-shelving" ${newTotal ? "" : "disabled"}>${newTotal ? `➜ Siirrä kaikki kärryt hyllytykseen (${newTotal} uutta tuotetta)` : "✓ Kaikki saapuneet viety hyllytykseen"}</button>
       ${sent ? `<div class="muted small">Viimeksi viety hyllytykseen ${new Date(sent).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}. Vain uudet tuotteet viedään, jo viedyt eivät tule uudelleen.</div>` : ""}</div>
-    ${groups.map((g) => { const d = deltas[g.id]; return `<div class="card" style="border-left:4px solid ${g.color}"><h2>${g.icon} ${esc(g.name)} <span class="muted small">${g.items.length} tuotetta, ${g.items.reduce((s, i) => s + i.qty, 0)} kpl</span></h2>
+    ${groups.map((g) => { const d = deltas[g.id]; const shown = g.kind === "cart" ? g.newItems : g.items; return `<div class="card" style="border-left:4px solid ${g.color}"><h2>${g.icon} ${esc(g.name)} <span class="muted small">${shown.length} tuotetta, ${shown.reduce((s, i) => s + i.qty, 0)} kpl</span></h2>
       ${d ? (d.count ? `<button class="btn" style="margin-bottom:8px" data-action="cart-ready" data-cart="${esc(g.id)}">Kärry valmis → Hyllytykseen (${d.count} uutta tuotetta)</button>` : `<div class="muted small" style="margin-bottom:6px">✓ Viety hyllytykseen</div>`) : ""}
-      ${g.items.map((i) => `<div class="cart-item"><div><div class="line-name">${esc(i.name)}</div><div class="mono muted">${esc(i.location || "ei paikkaa")}${i.plate ? " | levy " + i.plate : ""}${i.ean ? " | EAN " + esc(i.ean) : ""}</div></div><div class="qtys"><b>${i.qty}</b> kpl</div></div>`).join("")}</div>`; }).join("")}`;
+      ${shown.map((i) => `<div class="cart-item"><div><div class="line-name">${esc(i.name)}</div><div class="mono muted">${esc(i.location || "ei paikkaa")}${i.plate ? " | levy " + i.plate : ""}${i.ean ? " | EAN " + esc(i.ean) : ""}</div></div><div class="qtys"><b>${i.qty}</b> kpl</div></div>`).join("")}</div>`; }).join("")}`;
 }
 
 export function deviationRows(order, recs) {

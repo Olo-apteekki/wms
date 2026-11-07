@@ -117,6 +117,8 @@ export function plateOf(cartId, parsedLoc, physAisle) {
 
 // Kärry paikalle (parsedLoc + fyysinen käytävä). Reitin ulkopuoliset (RX, JK, L4/L5, uusi) → null.
 export function cartOfLoc(parsedLoc, physAisle) {
+  // Lavapaikat (LA, esim. A3-LA-0-01 tai L5-LA-0-01) eivät kuulu mihinkään kärryyn missään käytävässä
+  if (String(parsedLoc?.shelf ?? "").toUpperCase() === "LA") return null;
   if (CART_SPLIT_OLD) return OLD_CARTS.find((c) => c.aisles.includes(physAisle))?.id || null;
   const sp = SPLITS[physAisle];
   if (sp) return (parseInt(parsedLoc?.shelf, 10) || 0) >= sp.from ? sp.late : sp.early;
