@@ -240,6 +240,13 @@ export function cartDelta(group, done = {}) {
 // items (kaikki saapuneet) ja names (tilaukset, joilta on saapuneita tuotteita).
 // Viedyt määrät kirjataan käyttäjäkohtaisesti: sent/{kärry}-{purkaja} (sentKey).
 export const sentKey = (cartId, worker) => `${cartId}-${ownerSlug(worker)}`;
+// Jo viedyt määrät: käyttäjäkohtainen kirjanpito + vanha, purkajaan sitomaton (sent/{kärry}, ennen v16 viedyt). Suurempi voimassa tuotteittain,
+// jotta ennen käyttäjäkohtaisia kärryjä viedyt tuotteet eivät tule uusiksi.
+function doneQty(sent, cartId, worker) {
+  const out = { ...(sent?.[cartId] || {}) };
+  for (const [k, v] of Object.entries(sent?.[sentKey(cartId, worker)] || {})) out[k] = Math.max(Number(out[k]) || 0, Number(v) || 0);
+  return out;
+}
 export function combineDayCarts(orders, master, worker) {
   const per = orders.map((o) => ({ o, ...splitToCarts(o.lines, o.recs, master) }));
   const groups = [];
@@ -252,7 +259,7 @@ export function combineDayCarts(orders, master, worker) {
       if (!g) continue;
       proto ||= g;
       for (const i of g.items) { const k = vkey(i.vnr); const ex = merged.get(k); if (ex) ex.qty += i.qty; else merged.set(k, { ...i }); }
-      if (g.kind === "cart") parts.push({ o: p.o, g, d: cartDelta(g, p.o.sent?.[sentKey(id, worker)] || {}) });
+      if (g.kind === "cart") parts.push({ o: p.o, g, d: cartDelta(g, doneQty(p.o.sent, id, worker)) });
     }
     if (!proto) continue;
     // newItems = vielä hyllytykseen viemättömät tuotteet (kärryn "uusi sisältö"); jo viedyt eivät näy kärryn tuotelistassa
