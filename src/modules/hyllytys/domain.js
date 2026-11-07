@@ -30,11 +30,26 @@ export const CARTS = CART_SPLIT_OLD ? OLD_CARTS : NEW_CARTS;
 
 // Kärryn avain: tukkutilausten kärryt ovat "A1", toimittajatilausten (Vastaanotto) "A1-V". Näin tukku- ja toimittajatilausten erät, lukitukset ja
 // edistyminen ovat toisistaan riippumattomia ja kärryjä voi hyllyttää yhtä aikaa molemmista lähteistä.
-export const cartBase = (key) => String(key ?? "").replace(/-V$/, "");
-export const isSupplierCart = (key) => /-V$/.test(String(key ?? ""));
+// Toimittajatilausten kärryt ovat käyttäjäkohtaisia ("A-V-aada_k"), jotta useampi purkaja voi purkaa yhtä aikaa ilman, että tuotteet
+// sekoittuvat samoihin kärryihin: Vastaanotto kirjoittaa laatikoille omistajan (box.owner) ja erät omalle avaimelleen. Vanha omistajaton "A-V" säilyy vanhoille laatikoille.
+export const ownerSlug = (name) => String(name ?? "").toLowerCase().replace(/[äå]/g, "a").replace(/ö/g, "o").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+export const supplierCartKey = (cartId, owner) => `${cartId}-V${owner ? "-" + ownerSlug(owner) : ""}`;
+export const cartBase = (key) => String(key ?? "").replace(/-V(-.*)?$/, "");
+export const isSupplierCart = (key) => /-V(-|$)/.test(String(key ?? ""));
+export const cartOwnerSlug = (key) => (String(key ?? "").match(/-V-(.+)$/) || [])[1] || null;
 export const isSupplierBox = (b) => b?.by === "vastaanotto";
 export const cartDef = (key) => CARTS.find((c) => c.id === cartBase(key));
-export const cartName = (key) => { const c = cartDef(key); return c ? c.name + (isSupplierCart(key) ? " (toimittajatilaus)" : "") : ""; };
+// Omistajan nimi kärryavaimelle laatikoiden perusteella (boxes = scannedBoxes)
+export const cartOwnerName = (key, boxes) => {
+  const slug = cartOwnerSlug(key);
+  if (!slug) return "";
+  return Object.values(boxes || {}).find((b) => b?.owner && ownerSlug(b.owner) === slug)?.owner || "";
+};
+export const cartName = (key, boxes) => {
+  const c = cartDef(key);
+  if (!c) return "";
+  return c.name + (isSupplierCart(key) ? " (toimittajatilaus)" : "");
+};
 
 // Jaettu käytävä: shelf >= from → reitin loppupään kärry (late), muuten alkupään (early).
 const SPLITS = { A4: { from: 15, early: "A2", late: "A1" }, B3: { from: 17, early: "B1", late: "B2" } };
@@ -362,6 +377,7 @@ export function batchItems(scannedBoxes, batch, cartId, master) {
   for (const b of Object.values(scannedBoxes || {})) {
     if (!b.items || b.t <= batch.since || (batch.until !== Infinity && b.t > batch.until)) continue;
     if (isSupplierBox(b) !== isSupplierCart(cartId)) continue; // tukku- ja toimittajatilausten laatikot eivät sekoitu
+    if (isSupplierCart(cartId) && (b.owner ? ownerSlug(b.owner) : null) !== cartOwnerSlug(cartId)) continue; // eri purkajien laatikot eivät sekoitu
     for (const item of b.items) {
       const e = enrichItem(item, master);
       if (e.cartId !== cartBase(cartId)) continue;

@@ -11,8 +11,8 @@ import { loadJson, saveJson } from "../../lib/storage.js";
 import { loginHtml, doLogin } from "../../lib/auth-ui.js";
 import { $ } from "../../lib/ui.js";
 import { WORKERS } from "../../config/workers.js";
-import { parseMaster, eanMatches, boxKey } from "../hyllytys/domain.js";
-import { parseOrderWorkbook, buildRec, summarize, lineKey, lineStatus, buildXml, xmlFileName, splitToCarts, placement, cartDelta } from "./domain.js";
+import { parseMaster, eanMatches, boxKey, ownerSlug, supplierCartKey } from "../hyllytys/domain.js";
+import { parseOrderWorkbook, buildRec, summarize, lineKey, lineStatus, buildXml, xmlFileName, splitToCarts, placement, cartDelta, combineDayCarts, dayOrderList, sentKey } from "./domain.js";
 import { startView, orderView, deviationRows } from "./views.js";
 
 const GCS_CSV = "https://storage.googleapis.com/olo-export-data/hyllytys-app-export000000000000.csv";
@@ -388,38 +388,67 @@ async function loadMaster() {
   setState({ masterLoading: false, masterError: `Hyllypaikkoja ei saatu ladattua (${gcsErr})` });
 }
 
+// Tänään puretut toimittajatilaukset (jokaisella on tänään kirjattu laatikko) yhdistetään samoihin kärryihin: Kärryt-välilehti ja vienti
+// käsittelevät kaikkien niiden tuotteet yhdessä, jolloin Hyllytyksessä on yksi kärry-erä eikä yhtä per tilaus.
+const curOrder = () => ({ id: S.order.id, supplier: S.order.supplier.name, lines: S.order.lines, recs: S.recs, sent: S.sent || {} });
+const dayOf = (t) => new Date(t).toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
+
+async function loadDayOrders() {
+  try {
+    const all = (await store.get("vastaanotto")) || {};
+    const today = dayOf(Date.now());
+    const recsOf = (raw) => { const r = {}; for (const [k, v] of Object.entries(raw || {})) { const rec = buildRec(v); if (rec) r[k] = rec; } return r; };
+    const hasToday = (o) => Object.values(o.rec || {}).some((r) => Object.values(r?.b || {}).some((b) => b?.t && dayOf(b.t) === today));
+    S.dayOrders = Object.entries(all).filter(([, o]) => !o.cancelled && o.meta && hasToday(o)).map(([id, o]) => ({
+      id, supplier: o.meta.supplier?.name || id,
+      lines: Object.values(o.lines || {}).sort((a, b) => (a.n || 0) - (b.n || 0)), recs: recsOf(o.rec), sent: o.sent || {},
+    }));
+  } catch { S.dayOrders = null; }
+  scheduleRender();
+}
+
 // Vie saapuneet tuotteet hyllytykseen kärryittäin ja sulkee kärryerät, jolloin kärryt ovat heti valittavissa Hyllytyksessä.
-// cartIds = vain nämä kärryt (muuten kaikki, joissa on uusia tuotteita). Vain uudet tuotteet viedään (sent-kirjanpito), joten
-// jo hyllytetty ei tule uudelleen, kun tilaukseen tulee lisää tuotteita.
+// cartIds = vain nämä kärryt (muuten kaikki, joissa on uusia tuotteita). Vain uudet tuotteet viedään (sent-kirjanpito tilauksittain), joten
+// jo hyllytetty ei tule uudelleen, kun tilaukseen tulee lisää tuotteita. Kärryn kaikkien päivän tilausten uudet tuotteet kirjoitetaan
+// ennen erän sulkemista, joten ne päätyvät samaan kärry-erään.
 async function toShelving(opts = {}) {
   const auto = !!opts.auto;
   const only = opts.cartIds || null;
   if (!S.master) { await loadMaster(); if (!S.master) { if (auto) setState({ error: "Tilaus on valmis, mutta hyllypaikkoja ei saatu ladattua: paina Kärryt → Siirrä hyllytykseen" }); return; } }
-  const { items, groups } = splitToCarts(S.order.lines, S.recs, S.master);
+  // Jokaisella purkajalla on omat kärryt: viedään vain valitun käyttäjän kirjaamat laatikot omaan kärryyn
+  if (!currentWorker) { setState({ error: "Valitse käyttäjä: jokaisella purkajalla on omat kärryt." }); return; }
+  const worker = currentWorker;
+  await loadDayOrders();
+  const { items, groups } = combineDayCarts(dayOrderList(S.dayOrders, curOrder(), worker), S.master, worker);
   if (!items.length) { setState({ error: auto ? null : "Ei saapuneita tuotteita vietäväksi", ...(auto ? { result: { type: "ok", text: "✓ Tilaus valmis (ei saapuneita tuotteita hyllytettäväksi)" } } : {}) }); return; }
-  const sent = (await store.get(`vastaanotto/${S.order.id}/sent`)) || {};
-  const plan = groups.filter((g) => g.kind === "cart" && (!only || only.includes(g.id))).map((g) => ({ g, d: cartDelta(g, sent[g.id] || {}) })).filter((x) => x.d.count);
+  const plan = groups.filter((g) => g.kind === "cart" && (!only || only.includes(g.id)) && g.newCount);
   if (!plan.length) { setState({ error: null, result: { type: "ok", text: auto ? "✓ Tilaus valmis (kaikki saapuneet tuotteet on jo viety hyllytykseen)" : "Ei uusia tuotteita vietäväksi: kaikki saapuneet on jo viety." } }); return; }
   if (!auto) {
-    const what = plan.map((x) => `${x.g.name}: ${x.d.count} tuotetta`).join(", ");
+    const what = plan.map((g) => `${g.name}: ${g.newCount} tuotetta (${g.parts.filter((x) => x.d.count).length} tilausta)`).join(", ");
     if (!confirm(`Viedäänkö hyllytykseen: ${what}? Kärryt ovat sen jälkeen valittavissa Hyllytyksessä.`)) return;
   }
   const day = todayKey();
-  for (const { g, d } of plan) {
-    const t = Date.now();
-    const sscc = `TT-${S.order.id}-${g.id}-${t.toString(36)}`;
-    const box = {
-      sscc, by: "vastaanotto", t,
-      items: d.items.map((i) => ({ vnr: i.vnr, altVnr: "", name: i.name, ean: i.ean || "", qty: i.qty, location: i.location, cartId: i.cartId, physAisle: i.physAisle, ...(i.exp?.length ? { exp: i.exp } : {}) })),
-    };
-    await store.set(`sessions/${day}/scannedBoxes/${boxKey(sscc)}`, box);
-    await store.set(`vastaanotto/${S.order.id}/sent/${g.id}`, { ...(sent[g.id] || {}), ...d.qty });
-    const bt = Math.max(Date.now(), t + 1);
-    await store.set(`sessions/${day}/cartBatches/${g.id}-V/${bt.toString(36)}${g.id}`, { by: "vastaanotto", t: bt });
+  for (const g of plan) {
+    let last = 0;
+    for (const { o, d } of g.parts) {
+      if (!d.count) continue;
+      const t = Math.max(Date.now(), last + 1);
+      last = t;
+      const sscc = `TT-${o.id}-${g.id}-${ownerSlug(worker)}-${t.toString(36)}`;
+      const box = {
+        sscc, by: "vastaanotto", owner: worker, t,
+        items: d.items.map((i) => ({ vnr: i.vnr, altVnr: "", name: i.name, ean: i.ean || "", qty: i.qty, location: i.location, cartId: i.cartId, physAisle: i.physAisle, ...(i.exp?.length ? { exp: i.exp } : {}) })),
+      };
+      await store.set(`sessions/${day}/scannedBoxes/${boxKey(sscc)}`, box);
+      await store.set(`vastaanotto/${o.id}/sent/${sentKey(g.id, worker)}`, { ...(o.sent?.[sentKey(g.id, worker)] || {}), ...d.qty });
+      await store.set(`vastaanotto/${o.id}/shelving`, { t: Date.now() });
+    }
+    const bt = Math.max(Date.now(), last + 1);
+    await store.set(`sessions/${day}/cartBatches/${supplierCartKey(g.id, worker)}/${bt.toString(36)}${g.id}`, { by: "vastaanotto", owner: worker, t: bt });
   }
-  await store.set(`vastaanotto/${S.order.id}/shelving`, { t: Date.now() });
-  const pieces = plan.reduce((s, x) => s + x.d.pieces, 0);
-  setState({ error: null, result: { type: "ok", text: `✓ ${auto ? "Tilaus valmis: " : ""}${plan.reduce((s, x) => s + x.d.count, 0)} tuotetta (${pieces} kpl) siirretty hyllytykseen: ${plan.map((x) => x.g.name).join(", ")} valittavissa Hyllytyksessä (Lataa tiedot).` } });
+  await loadDayOrders();
+  const pieces = plan.reduce((s, g) => s + g.newPieces, 0);
+  setState({ error: null, result: { type: "ok", text: `✓ ${auto ? "Tilaus valmis: " : ""}${plan.reduce((s, g) => s + g.newCount, 0)} tuotetta (${pieces} kpl) siirretty hyllytykseen: ${plan.map((g) => g.name).join(", ")} valittavissa Hyllytyksessä (Lataa tiedot).` } });
 }
 
 /* ───────── XML ja poikkeamat ───────── */
@@ -469,7 +498,7 @@ const actions = {
   "refresh-recent": async () => { await loadRecent(); setState({ error: null }); },
   "open-order": (d) => { setState({ tab: "lines", filter: "open", selectedKey: null, error: null, result: null }); openOrder(d.id); },
   "to-start": async () => { unsub?.(); unsub = null; stopVoice(); await loadRecent(); setState({ phase: "start", order: null, recs: {}, error: null, result: null, master: S.master }); },
-  tab: (d) => { setState({ tab: d.tab, error: null, result: null }); if (d.tab === "carts" && !S.master && !S.masterLoading) loadMaster(); },
+  tab: (d) => { setState({ tab: d.tab, error: null, result: null }); if (d.tab === "carts") { if (!S.master && !S.masterLoading) loadMaster(); loadDayOrders(); } },
   filter: (d) => setState({ filter: d.filter }),
   "select-line": (d) => (S.selectedKey === d.key ? setState({ selectedKey: null }) : selectLine(d.key)),
   "qty-delta": (d) => { S.draft.qty = Math.max(0, (S.draft.qty || 0) + parseInt(d.delta, 10)); scheduleRender(); },

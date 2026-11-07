@@ -1,7 +1,7 @@
 // Vastaanoton näkymät (puhtaita funktioita; kaikki data esc():n kautta).
 import { esc } from "../../lib/ui.js";
 import { formatYmd } from "../../lib/spoken.js";
-import { lineKey, lineStatus, summarize, splitToCarts, placement, cartDelta } from "./domain.js";
+import { lineKey, lineStatus, summarize, splitToCarts, placement, cartDelta, combineDayCarts, dayOrderList } from "./domain.js";
 
 const STATUS = {
   pending: { label: "Odottaa", cls: "st-pending" },
@@ -169,13 +169,17 @@ function cartsTab(v) {
   const { S } = v;
   if (S.masterLoading) return `<div class="card empty">Haetaan hyllypaikkoja…</div>`;
   if (!S.master) return `<div class="card"><div class="error">${esc(S.masterError || "Hyllypaikkoja ei ole ladattu")}</div><button class="btn" data-action="load-master">Yritä uudelleen</button></div>`;
-  const { groups, items } = splitToCarts(S.order.lines, S.recs, S.master);
-  if (!items.length) return `<div class="card empty">Ei saapuneita tuotteita vielä</div>`;
+  // Tänään puretut toimittajatilaukset yhdistetään samoihin kärryihin (yksi kärry-erä Hyllytyksessä, ei yhtä per tilaus)
+  const cur = { id: S.order.id, supplier: S.order.supplier.name, lines: S.order.lines, recs: S.recs, sent: S.sent || {} };
+  // Jokaisella purkajalla on omat kärryt: näytetään vain valitun käyttäjän (👤) kirjaamat laatikot
+  if (!v.currentWorker) return `<div class="card empty">Valitse käyttäjä: jokaisella purkajalla on omat kärryt.</div>`;
+  const { groups, items, names } = combineDayCarts(dayOrderList(S.dayOrders, cur, v.currentWorker), S.master, v.currentWorker);
+  if (!items.length) return `<div class="card empty">Ei vielä laatikoita, jotka ${esc(v.currentWorker)} on kirjannut tänään</div>`;
   const sent = S.shelvingSentAt;
-  const sentBy = S.sent || {};
-  const deltas = Object.fromEntries(groups.filter((g) => g.kind === "cart").map((g) => [g.id, cartDelta(g, sentBy[g.id] || {})]));
+  const deltas = Object.fromEntries(groups.filter((g) => g.kind === "cart").map((g) => [g.id, { count: g.newCount }]));
   const newTotal = Object.values(deltas).reduce((s, d) => s + d.count, 0);
-  return `<div class="card"><div class="muted small">Saapuneet tuotteet jaettuna kärryihin hyllytysreitin mukaisessa järjestyksessä. ${items.length} tuotetta, ${items.reduce((s, i) => s + i.qty, 0)} kpl.</div>
+  const uniq = [...new Set(names)];
+  return `<div class="card"><div class="muted small">👤 ${esc(v.currentWorker)}: omat kärryt. Tänään puretut toimittajatilaukset yhdistettynä samoihin kärryihin (${uniq.map(esc).join(", ")}), hyllytysreitin mukaisessa järjestyksessä. ${items.length} riviä, ${items.reduce((s, i) => s + i.qty, 0)} kpl.</div>
       <button class="btn" style="margin-top:8px" data-action="to-shelving" ${newTotal ? "" : "disabled"}>${newTotal ? `➜ Siirrä kaikki kärryt hyllytykseen (${newTotal} uutta tuotetta)` : "✓ Kaikki saapuneet viety hyllytykseen"}</button>
       ${sent ? `<div class="muted small">Viimeksi viety hyllytykseen ${new Date(sent).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}. Vain uudet tuotteet viedään, jo viedyt eivät tule uudelleen.</div>` : ""}</div>
     ${groups.map((g) => { const d = deltas[g.id]; return `<div class="card" style="border-left:4px solid ${g.color}"><h2>${g.icon} ${esc(g.name)} <span class="muted small">${g.items.length} tuotetta, ${g.items.reduce((s, i) => s + i.qty, 0)} kpl</span></h2>

@@ -2,7 +2,7 @@
 // Korvaa Tilaukset-Sheetin "vastaanotto"-välilehden ja "Tee XML vastaanottoa varten" -skriptin.
 // XML-muoto vastaa taulukon xml-data-välilehden tuottamaa tiedostoa (esim. 261010_New Organics.xml).
 import { colNum } from "../../lib/xlsx.js";
-import { enrichItem, sortRoute, CARTS } from "../hyllytys/domain.js";
+import { enrichItem, sortRoute, CARTS, ownerSlug } from "../hyllytys/domain.js";
 
 const str = (v) => (v === undefined || v === null ? "" : String(v).trim());
 // Taulukon numerot voivat olla tieteellisessä muodossa (8.18625026097E11) → kokonaisluku merkkijonona
@@ -233,6 +233,54 @@ export function cartDelta(group, done = {}) {
     if (d > 0) items.push({ ...c.item, qty: d, exp: done[k] ? [] : c.exp });
   }
   return { items, qty, count: items.length, pieces: items.reduce((s, i) => s + i.qty, 0) };
+}
+
+// Päivän puretut toimittajatilaukset yhdistettynä samoihin kärryihin. orders = [{id, supplier, lines, recs, sent}].
+// Palauttaa groups (kuten splitToCarts, mutta tuotteet summattu yli tilausten; kärryryhmillä parts = tilauskohtaiset viennit {o, g, d}, newCount/newPieces),
+// items (kaikki saapuneet) ja names (tilaukset, joilta on saapuneita tuotteita).
+// Viedyt määrät kirjataan käyttäjäkohtaisesti: sent/{kärry}-{purkaja} (sentKey).
+export const sentKey = (cartId, worker) => `${cartId}-${ownerSlug(worker)}`;
+export function combineDayCarts(orders, master, worker) {
+  const per = orders.map((o) => ({ o, ...splitToCarts(o.lines, o.recs, master) }));
+  const groups = [];
+  for (const id of [...CARTS.map((c) => c.id), "RX", "UUSI", "MUU"]) {
+    let proto = null;
+    const merged = new Map();
+    const parts = [];
+    for (const p of per) {
+      const g = p.groups.find((x) => x.id === id);
+      if (!g) continue;
+      proto ||= g;
+      for (const i of g.items) { const k = vkey(i.vnr); const ex = merged.get(k); if (ex) ex.qty += i.qty; else merged.set(k, { ...i }); }
+      if (g.kind === "cart") parts.push({ o: p.o, g, d: cartDelta(g, p.o.sent?.[sentKey(id, worker)] || {}) });
+    }
+    if (!proto) continue;
+    const newVnrs = new Set();
+    let newPieces = 0;
+    for (const x of parts) for (const i of x.d.items) { newVnrs.add(vkey(i.vnr)); newPieces += i.qty; }
+    const items = [...merged.values()];
+    groups.push({ ...proto, items: proto.kind === "cart" ? sortRoute(items) : items, parts, newCount: newVnrs.size, newPieces });
+  }
+  return { groups, items: per.flatMap((p) => p.items), names: per.filter((p) => p.items.length).map((p) => p.o.supplier) };
+}
+
+// Päivän tilaukset + avoin tilaus (tuoreimmilla tiedoilla) yhdeksi listaksi. Jos worker on annettu, jokaisen tilauksen rivit rajataan
+// vain kyseisen purkajan kirjaamiin laatikoihin: jokaisella purkajalla on omat kärryt, joten eri purkajien tuotteet eivät sekoitu.
+export function dayOrderList(dayOrders, cur, worker) {
+  const list = [...(dayOrders || []).filter((o) => o.id !== cur.id), cur];
+  return worker === undefined ? list : list.map((o) => ({ ...o, recs: recsOfUser(o.recs, worker) }));
+}
+
+// Rajaa rivien yhteenvedot (buildRec) tietyn purkajan laatikoihin.
+export function recsOfUser(recs, worker) {
+  const out = {};
+  for (const [k, r] of Object.entries(recs || {})) {
+    const b = {};
+    for (const x of r?.batches || []) if (x.by === worker) b[x.id] = { qty: x.qty, ...(x.end !== null && x.end !== undefined ? { end: x.end } : {}), t: x.t, by: x.by };
+    const rec = buildRec({ b });
+    if (rec) out[k] = rec;
+  }
+  return out;
 }
 
 export { colNum };

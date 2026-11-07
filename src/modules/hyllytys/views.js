@@ -2,7 +2,7 @@
 // Toiminnot kytketään data-action-attribuuteilla (ks. hyllytys.js).
 import { esc } from "../../lib/ui.js";
 import {
-  CARTS, PLATES, cartDef, cartName, isSupplierCart, routeIndex, enrichItem, batchList, batchItems, batchRemaining, allScannedEnriched,
+  CARTS, PLATES, cartDef, cartBase, cartName, cartOwnerName, isSupplierCart, routeIndex, enrichItem, batchList, batchItems, batchRemaining, allScannedEnriched,
   totals, buildReport,
 } from "./domain.js";
 
@@ -188,10 +188,14 @@ export function scanView(v) {
 export function cartSelectView(v) {
   const { fb, master, sessionId, now } = v;
   let cards = "";
-  // Tukkutilausten kärryt ("A1") ja toimittajatilausten kärryt ("A1-V") ovat omia eriään, ja molempia voi hyllyttää yhtä aikaa.
-  const sources = [...CARTS.map((c) => ({ c, key: c.id })), ...CARTS.map((c) => ({ c, key: c.id + "-V" }))];
+  // Tukkutilausten kärryt ("A") ja toimittajatilausten kärryt (käyttäjäkohtaiset, "A-V-aada_k") ovat omia eriään, ja niitä voi hyllyttää yhtä aikaa.
+  // Toimittajakärryt löytyvät suljetuista eristä: jokaisella purkajalla on omat kärrynsä.
+  const supplierKeys = Object.keys(fb.cartBatches || {}).filter((k) => isSupplierCart(k) && cartDef(k))
+    .sort((a, b) => CARTS.findIndex((c) => c.id === cartBase(a)) - CARTS.findIndex((c) => c.id === cartBase(b)) || a.localeCompare(b));
+  const sources = [...CARTS.map((c) => ({ c, key: c.id })), ...supplierKeys.map((k) => ({ c: cartDef(k), key: k }))];
   for (const { c, key } of sources) {
     const supplier = isSupplierCart(key);
+    const owner = supplier ? cartOwnerName(key, fb.scannedBoxes) : "";
     for (const batch of batchList(fb.cartBatches, key)) {
       const remaining = batchRemaining(fb.scannedBoxes, fb.shelved, batch, key, master);
       if (remaining === 0 && (batch.id !== "current" || supplier)) continue;
@@ -200,7 +204,7 @@ export function cartSelectView(v) {
       const taken = takenData && !stale;
       const mine = taken && takenData.by === sessionId;
       const isCurrent = batch.id === "current";
-      const head = `<div style="font-size:16px;font-weight:700">${esc(c.name)} #${batch.num}</div>${supplier ? `<div style="font-size:12px;font-weight:700;color:#7c3aed">📦 Toimittajatilaus</div>` : `<div style="font-size:12px;color:#64748b">Tukkutilaus</div>`}`;
+      const head = `<div style="font-size:16px;font-weight:700">${esc(c.name)} #${batch.num}</div>${supplier ? `<div style="font-size:12px;font-weight:700;color:#7c3aed">📦 Toimittajatilaus${owner && owner === v.currentWorker ? " · oma" : ""}</div>` : `<div style="font-size:12px;color:#64748b">Tukkutilaus</div>`}`;
       const cnt = `<div style="font-size:18px;font-weight:800;margin:6px 0">${remaining} hyllyttämätöntä</div>`;
       if (taken && !mine) {
         cards += `<div class="cart-card" style="border-color:#94a3b8;opacity:.7"><div style="font-size:24px;margin-bottom:4px">🔒</div>${head}
@@ -271,7 +275,7 @@ export function shelveView(v) {
 
   return `
     <div class="sticky-loc" style="border-bottom-color:${cart?.color || "#64748b"}">
-      <div class="flex justify-between items-center" style="font-size:12px;color:#475569;margin-bottom:2px"><span>${cart ? esc(cart.icon) : ""} <b>${esc(cartName(S.selectedCart))} #${S.selectedBatch?.num ?? ""}</b> — ${ts}/${tq} (${pct}%)</span><span>${S.currentIdx + 1}/${S.routeItems.length}</span></div>
+      <div class="flex justify-between items-center" style="font-size:12px;color:#475569;margin-bottom:2px"><span>${cart ? esc(cart.icon) : ""} <b>${esc(cartName(S.selectedCart, v.fb?.scannedBoxes))} #${S.selectedBatch?.num ?? ""}</b> — ${ts}/${tq} (${pct}%)</span><span>${S.currentIdx + 1}/${S.routeItems.length}</span></div>
       <div class="flex items-center gap-8">${locHtml}${cur.plate ? `<span style="margin-left:auto;padding:4px 12px;border-radius:10px;background:${cart?.color || "#64748b"};color:#fff;font-size:18px;font-weight:800;white-space:nowrap">Levy ${cur.plate}</span>` : ""}</div></div>
     <div class="mb-12">
       ${currentWorker ? `<div style="font-size:12px;color:#64748b;margin-bottom:4px">👤 ${esc(currentWorker)} — ⏱ <span id="clock">${min}:${pad2(sec)}${paused ? " — ⏸ TAUKO" : ""}</span></div>` : ""}
@@ -309,7 +313,7 @@ export function reportView(v) {
   const cart = cartDef(S.selectedCart);
   const row = (cls, i, txt, color) => `<div class="report-row ${cls}"><div style="font-weight:600;font-size:12px">${esc(i.name)}</div><div style="font-weight:700;color:${color}">${txt}</div></div>`;
   return `
-    <div class="card"><h1>${cart ? esc(cart.icon) : ""} ${esc(cartName(S.selectedCart))} #${S.selectedBatch?.num ?? ""} — Raportti</h1>
+    <div class="card"><h1>${cart ? esc(cart.icon) : ""} ${esc(cartName(S.selectedCart, v.fb?.scannedBoxes))} #${S.selectedBatch?.num ?? ""} — Raportti</h1>
       ${S.shelveStartTime ? `<div style="font-size:13px;color:#64748b;margin-bottom:8px">${currentWorker ? "👤 " + esc(currentWorker) + " — " : ""}⏱ ${Math.floor(elapsedSec / 60)} min ${elapsedSec % 60} s</div>` : ""}
       <div class="flex gap-8" style="margin:12px 0">
         <div style="flex:1;padding:10px;border-radius:8px;background:#f0fdf4;text-align:center"><div style="font-size:22px;font-weight:700;color:#16a34a">${ts}</div><div style="font-size:11px;color:#047857">Hyllytetty</div></div>

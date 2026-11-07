@@ -239,7 +239,7 @@ function logShelveEvent(vnr, item, added, total, expected, method) {
 function performanceRecord(partial) {
   const { shelved, expected } = totals(S.routeItems, S.shelved);
   const rec = {
-    worker: currentWorker || "(ei valittu)", cart: S.selectedCart, cartName: `${cartName(S.selectedCart)} #${S.selectedBatch?.num || ""}`,
+    worker: currentWorker || "(ei valittu)", cart: S.selectedCart, cartName: `${cartName(S.selectedCart, fb.scannedBoxes)} #${S.selectedBatch?.num || ""}`,
     batch: S.selectedBatch?.id || "", start: S.shelveStartTime, end: Date.now(), elapsed: elapsedSec() * 1000,
     shelved, expected, items: S.routeItems.length,
   };
