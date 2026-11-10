@@ -195,7 +195,10 @@ function startListening(vnr, qty) {
 }
 
 /* ───────── Tallennuskerros ───────── */
+let sessionSubscribed = false;
 function subscribeSession() {
+  if (sessionSubscribed) return; // uudelleenlataus ei tee toista tilausta
+  sessionSubscribed = true;
   store.subscribe(sessionPath(), (val) => {
     const v = val || {};
     fb = {

@@ -173,7 +173,8 @@ export function scanView(v) {
     <div class="card"><h1>Purku</h1>
       <p class="sub"><span class="live-dot"></span><span id="live-counters">${scannedCount}/${totalBoxes} laatikkoa luettu</span>${currentWorker ? " — 👤 " + esc(currentWorker) : ""}</p>
       ${result(S.lastScanResult)}${err(S.error)}
-      ${lookup}${unscannedHtml}</div>
+      ${lookup}${unscannedHtml}
+      <button class="btn-sm btn-outline" style="width:100%;margin-top:10px;font-size:12px" data-action="load" ${S.loadProgress ? "disabled" : ""}>${esc(S.loadProgress || "↻ Hae lähetteet ja tuoterekisteri uudelleen")}</button></div>
     ${activeBox}
     <div class="card"><h2>Kärryt</h2>${carts}
       ${rxQ ? `<div style="padding:8px 12px;border-radius:8px;background:#fef2f2;font-size:13px;margin-bottom:6px">💊 Reseptilääkkeet: ${rxQ} kpl</div>` : ""}
