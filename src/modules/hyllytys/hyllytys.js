@@ -321,7 +321,7 @@ function addBox(code) {
   if (!code) return;
   setState({ error: null, lastScanResult: null });
   const sscc = findBox(code, S.xmlBoxes, S.boxAltKeys, (k) => !!fb.scannedBoxes[boxKey(k)]);
-  if (!sscc) { setState({ error: "Koodi ei löydy", lastScanResult: { type: "fail", text: "Ei löydy" } }); return; }
+  if (!sscc) { setState({ error: `Koodi ei löydy (luettu: ${code})`, lastScanResult: { type: "fail", text: `Ei löydy: ${code}` } }); return; }
   if (fb.scannedBoxes[boxKey(sscc)]) { setState({ error: "Jo skannattu", lastScanResult: { type: "fail", text: "Jo skannattu" } }); return; }
   const items = S.xmlBoxes[sscc].map((i) => {
     const e = enrichItem(i, S.master);
@@ -362,8 +362,8 @@ function lookupEan(ean) {
     }
     found ||= foundNoLoc;
     if (!found) { // EAN ei toimi: kokeillaan tuotenumeroa (VNR)
-      const byVnr = lookupMaster(S.master, code, "");
-      if (byVnr && byVnr.name) found = { sku: code, ...byVnr };
+      const byVnr = lookupMaster(S.master, ean, "");
+      if (byVnr && byVnr.name) found = { sku: ean, ...byVnr };
     }
     if (!found) { setState({ lastScanResult: { type: "fail", text: `EAN/tuotenumero ${ean} ei löydy` }, error: null }); return; }
     const pl = parseLoc((found.location || "").trim());

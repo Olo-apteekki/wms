@@ -355,6 +355,20 @@ export function findBox(code, xmlBoxes, altKeys, isScanned) {
     const m = altKeys[code];
     if (m && xmlBoxes[m]) sscc = m;
   }
+  if (!sscc && altKeys) { // vaihtoehtoavaimet samalla pääte-/sisältösäännöllä
+    const ak = Object.keys(altKeys).find((a) => a.length >= 8 && (a.endsWith(code) || code.endsWith(a)) && xmlBoxes[altKeys[a]]);
+    if (ak) sscc = altKeys[ak];
+  }
+  if (!sscc && /^\d{10,}$/.test(code)) { // GS1-etuliite (00) tai tarkistenumero koodin päässä: laatikon tunnus sisältyy koodiin
+    const cands = [code, code.slice(0, -1), code.replace(/^00/, ""), code.replace(/^00/, "").slice(0, -1)];
+    const hit = Object.keys(xmlBoxes).filter((k) => k.length >= 8 && /^\d+$/.test(k) && cands.some((c) => c.includes(k)));
+    if (hit.length === 1) sscc = hit[0];
+  }
+  if (!sscc && code.length >= 12) { // tarran ja XML:n tunnus eroavat alusta (etuliite/tarkiste), mutta lopun 8+ merkkiä täsmäävät
+    const tail = (a, b) => { let n = 0; while (n < a.length && n < b.length && a[a.length - 1 - n] === b[b.length - 1 - n]) n++; return n; };
+    const scored = Object.keys(xmlBoxes).map((k) => [k, tail(k, code)]).filter(([, n]) => n >= 8).sort((a, b) => b[1] - a[1]);
+    if (scored.length && (scored.length === 1 || scored[0][1] > scored[1][1])) sscc = scored[0][0];
+  }
   if (!sscc && code.length >= 18 && /^\d+$/.test(code)) {
     const unscanned = Object.keys(xmlBoxes).filter((k) => !isScanned(k));
     if (unscanned.length === 1) sscc = unscanned[0];
